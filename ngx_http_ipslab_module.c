@@ -1,58 +1,69 @@
-/*ÄÚ²¿º¯ÊıÒÔipslab_¿ªÍ·
- * Ä£¿éÏà¹Øº¯ÊıÒÔngx_¿ªÍ·
+/*å†…éƒ¨å‡½æ•°ä»¥ipslab_å¼€å¤´
+ * æ¨¡å—ç›¸å…³å‡½æ•°ä»¥ngx_å¼€å¤´
  * */
 
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
-//#include <openssl/err.h>
-//#include <malloc.h>
-
 # include <openssl/md5.h>
+# include "duktape.h"
+# include "gumbo.h"
 
 
+#define F_PATH "E:/Files/eclipse_cpp_workspace/nginx-1.12.2/s_3rd_mdl/ngx_http_ipslab_module/hx.js"
 #define ID_POS_MIN 6
-#define ID_LEN_IN_TEXT sizeof(ngx_int_t)
-#define ENCRPT_ID_SIZE 33
-//#define CURVE_I 8
+//ID çš„é•¿åº¦
+#define ENCRPT_ID_SIZE 32
+//æµè§ˆå™¨ä½¿ç”¨çš„IDåŠ å¯†ç®—æ³•ï¼Œæ ¹æ®æ”¶åˆ°çš„IDç”Ÿæˆè¯·æ±‚æºå¸¦çš„ID
+#define hx_ID_Encrypt_Algorithm MD5
+//æœåŠ¡å™¨ä½¿ç”¨çš„IDé™†ç»­ç”Ÿæˆç®—æ³•ï¼Œç”±slabä¸­å½“å‰IDç”Ÿæˆä¸‹ä¸€ä»£IDã€‚
+#define hx_ID_Next_Algorithm id_next_algorithm
+
 typedef struct {
 	ngx_chain_t *out_ctx;
+	ngx_str_t hxID;
 } ngx_http_ipslab_ctx_t;
 
 typedef struct {
+	ngx_int_t pass_count;//å¦‚æœè¯·æ±‚è¿”å›ä¸€ä¸ªHTMLé¡µé¢ï¼Œå°†ä¼šæ ¹æ®HTMLè§£æç»“æœä¿ç•™è¯·æ±‚ç›¸å…³èµ„æºçš„æœºä¼šã€‚
 	u_char rbtree_node_data;
 	ngx_queue_t queue;
-	u_char old_ID[ENCRPT_ID_SIZE];
+	u_char slab_ID[ENCRPT_ID_SIZE+1];//nodeä¸­ä¿ç•™çš„å‡æ˜¯ç»™æµè§ˆå™¨ä¸‹å‘çš„IDï¼Œæµè§ˆå™¨ç«¯åœ¨è¯·æ±‚æ—¶ä¼šè¿›è¡ŒMD5ï¼Œè€Œæœ¬æ¨¡å—ä¼šåœ¨å¼ºæ±‚åˆ°è¾¾æ—¶è®¿é—®slabçš„look upæ“ä½œä¸­è¿›è¡ŒMD5
+	u_char last_slab_ID[ENCRPT_ID_SIZE+1];
+
 
 } ngx_http_ipslab_node_t;
 
-//ngx_http_ipslab_shm_t ±£´æÔÚ¹²ÏíÄÚ´æÖĞ
+//ngx_http_ipslab_shm_t ä¿å­˜åœ¨å…±äº«å†…å­˜ä¸­
 typedef struct {
-	//ºìºÚÊ÷ÓÃÓÚ¿ìËÙ¼ìË÷
+	//çº¢é»‘æ ‘ç”¨äºå¿«é€Ÿæ£€ç´¢
 	ngx_rbtree_t rbtree;
-	//Ê¹ÓÃºìºÚÊ÷±ØĞë¶¨ÒåµÄÉÚ±ø½Úµã
+	//ä½¿ç”¨çº¢é»‘æ ‘å¿…é¡»å®šä¹‰çš„å“¨å…µèŠ‚ç‚¹
 	ngx_rbtree_node_t sentinel;
-	//ÌÔÌ­Á´±í
+	//æ·˜æ±°é“¾è¡¨
 	ngx_queue_t queue;
 } ngx_http_ipslab_shm_t;
 
 typedef struct {
-	//ssize_t shmsize;¹²ÏíÄÚ´æ´óĞ¡£¬ÅäÖÃÏîÊÊºÏngx_int_t,ÄÚ´æÊÊºÏÊ¹ÓÃssize_t
+	//ssize_t shmsize;å…±äº«å†…å­˜å¤§å°ï¼Œé…ç½®é¡¹é€‚åˆngx_int_t,å†…å­˜é€‚åˆä½¿ç”¨ssize_t
 	ngx_int_t shmsize_int;
-	ngx_slab_pool_t *shpool;//²Ù×÷¹²ÏíÄÚ´æÒ»¶¨ĞèÒªµÄ½á¹¹Ìå£¬Õâ¸ö½á¹¹ÌåÒ²ÔÚ¹²ÏíÄÚ´æÖĞ
+	ngx_slab_pool_t *shpool;//æ“ä½œå…±äº«å†…å­˜ä¸€å®šéœ€è¦çš„ç»“æ„ä½“ï¼Œè¿™ä¸ªç»“æ„ä½“ä¹Ÿåœ¨å…±äº«å†…å­˜ä¸­
 	ngx_http_ipslab_shm_t *sh;
 // ngx_int_t uri_ID;
 } ngx_http_ipslab_conf_t;
+
 static ngx_int_t ngx_http_ipslab_handler(ngx_http_request_t *r);
-static char * ngx_http_ipslab_createmem(ngx_conf_t *cf, ngx_command_t *cmd,
-		void *conf);
+static char * 	 ngx_http_ipslab_createmem(ngx_conf_t *cf, ngx_command_t *cmd,	void *conf);
 static ngx_int_t ngx_http_ipslab_init(ngx_conf_t *cf);
-static void *ngx_http_ipslab_create_main_conf(ngx_conf_t *cf);
-static ngx_int_t ipslab_subrequest_post_handler(ngx_http_request_t *r,
-		void *data, ngx_int_t rc);
-static void
-ipslab_post_handler(ngx_http_request_t * r);
-//8888static ngx_int_t ngx_http_ipslab_input_filter(void *data, ssize_t bytes);
+static void *    ngx_http_ipslab_create_main_conf(ngx_conf_t *cf);
+static ngx_int_t ipslab_subrequest_post_handler(ngx_http_request_t *r,void *data, ngx_int_t rc);
+static void      ipslab_post_handler(ngx_http_request_t * r);
+
+
+static GumboNode* find_body_node(const GumboNode* root);
+static ngx_buf_t* build_content_response(ngx_http_request_t *r,const char* ID_frm_srvr);
+static ngx_uint_t ipslab_ip_atoui(ngx_str_t str_ip);
+
 
 static ngx_command_t ngx_http_ipslab_commands[] = { {
 ngx_string("ip_slab"),
@@ -169,7 +180,7 @@ static char * ngx_http_ipslab_createmem(ngx_conf_t *cf, ngx_command_t *cmd,
 	value = cf->args->elts;
 	mconf = (ngx_http_ipslab_conf_t *) conf;
 	if (cf->args->nelts > 1) {
-		//½«×Ö·û´®×ªÎªÕûĞÎ
+		//å°†å­—ç¬¦ä¸²è½¬ä¸ºæ•´å½¢
 		mconf->shmsize_int = ngx_atoi(value[1].data, value[1].len);
 		if (mconf->shmsize_int == NGX_ERROR) {
 			return "transform from str to int fail";
@@ -203,7 +214,7 @@ static ngx_int_t ngx_http_ipslab_init(ngx_conf_t *cf)
 //static ngx_int_t ngx_http_ipslab_init(ngx_conf_t *cf, EC_KEY* key, u_char* retID)
 {
 	ngx_http_handler_pt *h;
-	ngx_http_core_main_conf_t *cmcf; //Ö»ÓĞmain¼¶±ğµÄ
+	ngx_http_core_main_conf_t *cmcf; //åªæœ‰mainçº§åˆ«çš„
 
 	cmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module);
 	h = ngx_array_push(&cmcf->phases[NGX_HTTP_CONTENT_PHASE].handlers);
@@ -220,104 +231,9 @@ static ngx_int_t ngx_http_ipslab_init(ngx_conf_t *cf)
 
 }*/
 ngx_int_t ipslab_encrypt_mssg(u_char* mssg,u_char* encrptMssg){
-	//²ÎÊı£ºÒª¼ÓÃÜµÄÔ­ĞÅÏ¢messg£¬ÓÃÀ´´æ·Å¼ÓÃÜºóĞÅÏ¢µÄencrptMssg
+	//å‚æ•°ï¼šè¦åŠ å¯†çš„åŸä¿¡æ¯messgï¼Œç”¨æ¥å­˜æ”¾åŠ å¯†åä¿¡æ¯çš„encrptMssg
 	//
-	//Ê¹ÓÃÍÖÔ²¼ÓÃÜ½øĞĞ¼ÓÃÜ
-	/*EC_KEY *key1;
-	int crv_len;
-	 unsigned int nid,ret,sig_len,size;
-	EC_builtin_curve *curves;
-	EC_GROUP *group1;
 
-
-	// ¹¹Ôì EC_KEY Êı¾İ½á¹¹
-	key1=EC_KEY_new();
-	    if(key1==NULL)
-	    {
-	        printf("EC_KEY_new err!\n");
-	        return -1;
-	    }
-	//»ñÈ¡ÊµÏÖµÄÍÖÔ²ÇúÏß¸öÊı
-    crv_len = EC_get_builtin_curves(NULL, 0);
-    curves = (EC_builtin_curve *)malloc(sizeof(EC_builtin_curve) * crv_len);
-    // »ñÈ¡ÍÖÔ²ÇúÏßÁĞ±í
-    EC_get_builtin_curves(curves, crv_len);
-    // Ñ¡È¡Ò»ÖÖÍÖÔ²ÇúÏß
-      nid=curves[CURVE_I].nid;
-      fprintf(stderr,"sxx-fpf-ipslab_encrypt_mssg nid:%d",nid);
-      fprintf(stderr,"sxx-fpf-ipslab_encrypt_mssg comment:%s",curves[25].comment);
-	 group1=EC_GROUP_new_by_curve_name(nid);
-	 if(group1==NULL)
-	 {
-		 printf("EC_GROUP_new_by_curve_name err!\n");
-		 return -1;
-	 }
-	 // ÉèÖÃÃÜÔ¿²ÎÊı
-	ret=EC_KEY_set_group(key1,group1);
-	if(ret!=1)
-	{
-		printf("EC_KEY_set_group err.\n");
-		return -1;
-	}
-	// Éú³ÉÃÜÔ¿
-	ret=EC_KEY_generate_key(key1);
-	if(ret!=1)
-	{
-		printf("EC_KEY_generate_key err.\n");
-		return -1;
-	}
-
-	//»ñÈ¡ÃÜÔ¿´óĞ¡
-	size=ECDSA_size(key1);
-	fprintf(stderr,"sxx-fpf-ipslab_encrypt_mssg:size:%i]\r\n",size);
-	//fprintf(stderr,"sxx-fpf-ipslab_encrypt_mssg:EC_KEY key1:%s]\r\n",key1->meth);
-	//fprintf(stderr,"sxx-fpf-ipslab_encrypt_mssg:EC_KEY key1:%s]\r\n",key1->engine);
-	fprintf(stderr,"sxx-fpf-ipslab_encrypt_mssg:EC_KEY key1:%d]\r\n",EC_KEY_get0_public_key(key1));
-
-
-
-
-
-	//Ç©ÃûÊı¾İ¿É½« digest ÖĞµÄÊı¾İ¿´×÷ÊÇ sha1 ÕªÒª½á¹û
-	    ret=ECDSA_sign(0,mssg,20,encrptMssg,&sig_len,key1);
-	    fprintf(stderr,"sxx-fpf-ipslab_encrypt_mssg:encrptMssg:%s]\r\n",encrptMssg);
-	    fprintf(stderr,"ipslab_encrypt_mssg:mssg:%s]\r\n",mssg);
-	    if(ret!=1)
-	    {
-
-	    	fprintf(stderr,"sign err!\n");
-	        return -1;
-	    }
-
-	       EC_KEY_free(key1);
-
-
-	      free(curves);*/
-	/*char* tmp_mssg = mssg;
-	char* tmp_encrptMssg =
-	 MD5(mssg,strlen((char*)mssg),encrptMssg);*/
-	/*MD5_CTX md5;
-	ngx_int_t size;
-	size = strlen((char *)mssg);
-	if (!MD5_Init(&md5)){
-			printf("MD5_Init error\n");
-			return -1;
-		}
-
-		if (!MD5_Update(&md5, mssg,size)){
-			printf("MD5_Update error\n");
-			return -1;
-		}
-		if (!MD5_Final(encrptMssg, &md5))
-		{
-			printf("MD5_Final error\n");
-			return -1;
-		}
-		for (int i = 0;i<32;i++){
-			printf("%02X", encrptMssg[i]);
-		}
-*/
-	//ngx_memcpy(encrptMssg,tmp_encrptMssg,);
 	 unsigned char md[16];
 	 int i;
 
@@ -334,50 +250,41 @@ ngx_int_t ipslab_encrypt_mssg(u_char* mssg,u_char* encrptMssg){
 
 	      return 1;
 }
-ngx_int_t ipslab_func_ID_getnext(u_char* old_ID,u_char* next_ID) {
-	//¸ºÔğ½«ºìºÚÊ÷ÖĞ´¢´æµÄoldID½øĞĞÔËËãµÃµ½
-	//²ÎÊı£º
+ngx_int_t ipslab_func_ID_getnext_update_slab(u_char* slab_ID,u_char* next_ID) {
 
-	//u_char *tmp_ID = malloc(ENCRPT_ID_SIZE);
-	//memcpy(tmp_ID, old_ID, ENCRPT_ID_SIZE);
-
-	// ¼ì²éÃÜÔ¿
-	//ret = EC_KEY_check_key(key);
-	//if (ret != 1) {		fprintf(stderr, "%s", "sxx-testecc-check key err.\n");
-	//	return -1;	}
-	//ÀûÓÃold_IDÉú³Énext_ID
-	ipslab_encrypt_mssg(old_ID,next_ID);
-	//¸üĞÂold_ID¡£´Ónext_ID ¿½±´n¸öµ½old_ID
-	ngx_memcpy(old_ID,next_ID,ENCRPT_ID_SIZE-1);
+	//åˆ©ç”¨slab_IDç”Ÿæˆnext_ID
+	ipslab_encrypt_mssg(slab_ID,next_ID);
+	//æ›´æ–°slab_IDã€‚ä»next_ID æ‹·è´nä¸ªåˆ°slab_ID
+	ngx_memcpy(slab_ID,next_ID,ENCRPT_ID_SIZE);
 	return 1;
 }
 
 ngx_int_t ipslab_func_IDnew(u_char* encryptedID) {
-	//²ÎÊı£º ¾­¹ı¼ÓÃÜµÄencryptedID¡£
-	//1.ÒÔÊ±¼ä×÷ÎªÔ­Ê¼ĞÅÏ¢mssg£¬2.¼ÓÃÜµÃµ½encryptedID
+	//å‚æ•°ï¼š ç»è¿‡åŠ å¯†çš„encryptedIDã€‚
+	//1.ä»¥æ—¶é—´ä½œä¸ºåŸå§‹ä¿¡æ¯mssgï¼Œ2.åŠ å¯†å¾—åˆ°encryptedID
 
-	u_char tmpID[ENCRPT_ID_SIZE];
-	//1.ÒÔÊ±¼ä×÷ÎªÔ­Ê¼ĞÅÏ¢mssg
+	u_char tmpID[ENCRPT_ID_SIZE+1];
+	//1.ä»¥æ—¶é—´ä½œä¸ºåŸå§‹ä¿¡æ¯mssg
 	ngx_time_t *tp;
-	ngx_msec_t now;	  //±¾ÖÊÊÇngx_uint_t;
+	ngx_msec_t now;	  //æœ¬è´¨æ˜¯ngx_uint_t;
 	tp = ngx_timeofday();
 	now = (ngx_msec_t) (tp->sec * 1000 + tp->msec);
 	fprintf(stderr, "mesc-now:%d", (int) now);
-	//itoa²¢²»ÊÇÒ»¸ö±ê×¼µÄCº¯Êı£¬ËüÊÇWindowsÌØÓĞµÄ£¬Èç¹ûÒªĞ´¿çÆ½Ì¨µÄ³ÌĞò£¬ÇëÓÃsprintf
+	//itoaå¹¶ä¸æ˜¯ä¸€ä¸ªæ ‡å‡†çš„Cå‡½æ•°ï¼Œå®ƒæ˜¯Windowsç‰¹æœ‰çš„ï¼Œå¦‚æœè¦å†™è·¨å¹³å°çš„ç¨‹åºï¼Œè¯·ç”¨sprintf
 	sprintf((char *)tmpID,"%d",(int)now);
 fprintf(stderr,"sxx-fpf-ipslab_func_IDnew: tmpID: %s]",tmpID);
-	//2.¼ÓÃÜµÃµ½encryptedID
+	//2.åŠ å¯†å¾—åˆ°encryptedID
 
 
-	ipslab_func_ID_getnext(tmpID, encryptedID);
+ipslab_func_ID_getnext_update_slab(tmpID, encryptedID);
 	fprintf(stderr,"sxx-fpf-ipslab_func_IDnew: encryptedID: %s]",encryptedID);
 
 	return 1;
 }
 
 static ngx_int_t ngx_abstract_hxID(ngx_http_request_t *r, ngx_int_t* begin_pos,ngx_int_t* end_pos)
-//find_posÊÇhxID=xxxxÖĞxxxx¿ªÊ¼µÄÎ»ÖÃ
 {
+	//find_posæ˜¯hxID=xxxxä¸­xxxxå¼€å§‹çš„ä½ç½®
 	ngx_int_t isAuth = -1;
 	ngx_str_t match = ngx_string("hxID=");
 	ngx_str_t hxID_str;
@@ -386,7 +293,7 @@ static ngx_int_t ngx_abstract_hxID(ngx_http_request_t *r, ngx_int_t* begin_pos,n
 	ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0,
 			"sxx-ngx_abstract_hxID &r->args:%V\r\n", &(r->args));
 
-	//¶ÔargsµÄÃ¿¸ö×Ö¶Î½øĞĞ±È½Ï
+	//å¯¹argsçš„æ¯ä¸ªå­—æ®µè¿›è¡Œæ¯”è¾ƒ
 	ngx_uint_t i = 0;
 	if (r->args.len >= match.len) {
 		for (; i <= r->args.len - match.len; i++) {
@@ -439,7 +346,7 @@ static ngx_int_t ngx_abstract_hxID(ngx_http_request_t *r, ngx_int_t* begin_pos,n
 
 	return -1;
 }
-/* É¾³ı×îºóÒ»¸ö½Úµã*/
+/* åˆ é™¤æœ€åä¸€ä¸ªèŠ‚ç‚¹*/
 static void ngx_http_ipslab_delete_one(ngx_http_request_t *r,
 		ngx_http_ipslab_conf_t *conf) {
 
@@ -465,26 +372,21 @@ static void ngx_http_ipslab_delete_one(ngx_http_request_t *r,
 	ngx_slab_free_locked(conf->shpool, node);
 
 }
-static ngx_int_t ngx_http_ipslab_lookup(ngx_http_request_t *r,
-		ngx_http_ipslab_conf_t *conf, ngx_uint_t ip_int,
-		u_char* server_ID)
-//--hashÊÇipµÄhash
+/*static ngx_int_t ngx_http_ipslab_lookup_no_update(ngx_http_request_t *r,
+		ngx_http_ipslab_conf_t *conf, ngx_uint_t ip_int,u_char* slab_ID_out,u_char* last_slab_ID_out)
+//æ‰§è¡ŒæŸ¥æ‰¾åŠŸèƒ½ï¼Œæ‰¾åˆ°çš„ç»“æœä½¿ç”¨å‚æ•°slab_ID_outå’Œold_slab_ID_outå‘å¤–ä¼ é€’
+//slab_IDå’Œold_slab_ID éƒ½æ˜¯ä¸‹å‘ç»™æµè§ˆå™¨çš„IDï¼Œé‰´äºæµè§ˆå™¨ç«¯IDç»è¿‡md5ç®—æ³•ååœ¨è¯·æ±‚ä¸­æºå¸¦çš„hxIDï¼Œå‘å¤–ä¼ é€’çš„slab_ID_out=md5(slab_ID_out);
+//old_slab_ID_out = md5(slab_ID_out).
+//æˆåŠŸè¿”å›1ï¼Œå¤±è´¥è¿”å›0
 {
 
-	size_t size;
+
 	ngx_rbtree_node_t *node, *sentinel;
 	ngx_http_ipslab_node_t *lr;
 
-
-	fprintf(stderr, "sxx-fpf-ngx_http_ipslab_lookup:now I am here L414\r\n");
-	//ngx_atoi(r->args->data,sizeof(ngx_int_t));
 	node = conf->sh->rbtree.root;
-	fprintf(stderr, "sxx-fpf-ngx_http_ipslab_lookup:now I am here L417\r\n");
 	sentinel = conf->sh->rbtree.sentinel;
-	ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0,
-						"sxx-log-ngx_http_ipslab_lookup:now I am here");
 
-	fprintf(stderr, "sxx-fpf-ngx_http_ipslab_lookup:now I am here L422\r\n");
 	while (node != sentinel) {
 		if (ip_int < node->key) {
 			node = node->left;
@@ -495,52 +397,104 @@ static ngx_int_t ngx_http_ipslab_lookup(ngx_http_request_t *r,
 			node = node->right;
 			continue;
 		}
-		if (ip_int == node->key)	  //ID²»Æ¥ÅäÒÀÈ»¿ÉÒÔÕâÑù×ö¶ø±ÜÃâÖØ·Å¹¥»÷
+		if (ip_int == node->key)	  //æ‰¾åˆ°èŠ‚ç‚¹
+			{
+			lr = (ngx_http_ipslab_node_t *) &node->data;
+			ipslab_encrypt_mssg(lr->slab_ID,slab_ID_out);
+			ipslab_encrypt_mssg(lr->last_slab_ID,last_slab_ID_out);
+			return 1;
+		}
+	}
+	//æ²¡æœ‰æ‰¾åˆ°è¯¥èŠ‚ç‚¹
+	return 0;
+
+}*/
+static ngx_int_t ngx_http_ipslab_lookup_ID_update_forward(ngx_http_request_t *r,
+		ngx_http_ipslab_conf_t *conf, ngx_uint_t ip_int,
+		u_char* server_ID)
+//--hashæ˜¯ipçš„hash
+//ç”¨server_ID å‘å¤–ä¼ å‡ºæ‰¾åˆ°slab_IDç»è¿‡MD5çš„new_ID
+{
+
+	size_t size;
+	ngx_rbtree_node_t *node, *sentinel;
+	ngx_http_ipslab_node_t *lr;
+
+
+	fprintf(stderr, "sxx-fpf-ngx_http_ipslab_lookup_ID_update_forward:now I am here L414\r\n");
+	//ngx_atoi(r->args->data,sizeof(ngx_int_t));
+	node = conf->sh->rbtree.root;
+	fprintf(stderr, "sxx-fpf-ngx_http_ipslab_lookup_ID_update_forward:now I am here L417\r\n");
+	sentinel = conf->sh->rbtree.sentinel;
+	ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0,
+						"sxx-log-ngx_http_ipslab_lookup_ID_update_forward:now I am here");
+
+	fprintf(stderr, "sxx-fpf-ngx_http_ipslab_lookup_ID_update_forward:now I am here L422\r\n");
+	while (node != sentinel) {
+		if (ip_int < node->key) {
+			node = node->left;
+			continue;
+		}
+
+		if (ip_int > node->key) {
+			node = node->right;
+			continue;
+		}
+		if (ip_int == node->key)	  //åªè¦IPå­˜åœ¨ï¼Œä¸ç®¡IDæ˜¯å¦åŒ¹é…éƒ½è¦æ›´æ–°ID
 			{
 			lr = (ngx_http_ipslab_node_t *) &node->data;
 			ngx_queue_remove(&lr->queue);
 			ngx_queue_insert_head(&conf->sh->queue, &lr->queue);
-			//¼´Ê±¸üĞÂ²¢·µ»Ø¸üĞÂºóID
+			//å³æ—¶æ›´æ–°å¹¶è¿”å›æ›´æ–°åID
 
-			ngx_log_error(8, r->connection->log, 0,	"sxxx-ip_int == node->key,lr->old_ID before IDnext():%s", lr->old_ID);
-			//lr->old_ID=ngx_func_IDnext(id_tmp);
-			ipslab_func_ID_getnext(lr->old_ID,server_ID);
-			ngx_log_error(8, r->connection->log, 0,	"sxxx-ip_int == node->key,lr->old_ID after IDnext():%s", lr->old_ID);
-			//ngx_log_error(8, r->connection->log, 0,"sxxx-find,server_ID after IDnext():%i", (int )lr->old_ID);
-			//ngx_log_error(8, r->connection->log, 0, "sxxx-IDnext:%i",(int )lr->old_ID);
+			ngx_log_error(8, r->connection->log, 0,	"sxxx-ip_int == node->key,lr->slab_ID before IDnext():%s", lr->slab_ID);
+			//lr->slab_ID=ngx_func_IDnext(id_tmp);
+			//å…ˆæŠŠä¸Šä¸€æ¬¡ä¸‹å‘çš„slab_IDä¿å­˜åˆ°last_slab_IDï¼Œåœ¨ipslab_func_ID_getnext_update_slab
+			//ä¸­æ›´æ–°slabä¸­çš„slab_IDï¼Œè¿™å°†æ˜¯è¿™æ¬¡è¯·æ±‚åº”è¯¥åŒ¹é…çš„IDï¼Œä¹Ÿæ˜¯å“åº”ä¸­è¦ä¸‹å‘ç»™æµè§ˆå™¨çš„IDï¼Œä¸ºæ–¹ä¾¿è¿™æ¬¡æ¯”è¾ƒï¼Œ
+			//ç”¨server_IDä»slabä¸­ä¼ å‡ºæ¥ã€‚
+			ngx_memcpy(lr->last_slab_ID,lr->slab_ID,strlen((char*)lr->slab_ID));//ä¿å­˜
+			ipslab_func_ID_getnext_update_slab(lr->slab_ID,server_ID);//æ›´æ–°
+
+			ngx_log_error(8, r->connection->log, 0,	"sxxx-ip_int == node->key,lr->slab_ID after IDnext():%s", lr->slab_ID);
+
 
 			return 1;
 		}
 
-		//²âÊÔ
+		//æµ‹è¯•
 		// if(lr==NULL) printf("printf:%s","OK");
 
 	}
 
 	size = offsetof(ngx_rbtree_node_t,
-			data) + sizeof(ngx_http_ipslab_node_t)+ENCRPT_ID_SIZE;
+			data) + sizeof(ngx_http_ipslab_node_t)+ENCRPT_ID_SIZE+1;
 
 	node = ngx_slab_alloc_locked(conf->shpool, size);
 
 	while (node == NULL) {
-		//É¾³ı×îºóÒ»¸ö,Áô³öÒ»µã·ÖÅä¿Õ¼ä
+		//åˆ é™¤æœ€åä¸€ä¸ª,ç•™å‡ºä¸€ç‚¹åˆ†é…ç©ºé—´
 		ngx_http_ipslab_delete_one(r, conf);
 		node = ngx_slab_alloc_locked(conf->shpool, size);
 	}
 
 	node->key = ip_int;
 
+
 	lr = (ngx_http_ipslab_node_t *) &node->data;
 
 	// retNewID = (u_char *)malloc(ENCRPT_ID_SIZE);free(retNewID);
 	fprintf(stderr,"in func lookup,before IDnew, server_ID:%s]",server_ID);
 	ipslab_func_IDnew(server_ID);
-	fprintf(stderr,"sxx-fpf-ngx_http_ipslab_lookup:after IDnew, server_ID:%s]",server_ID);
+	fprintf(stderr,"sxx-fpf-ngx_http_ipslab_lookup_ID_update_forward:after IDnew, server_ID:%s]",server_ID);
 
-	ngx_memcpy(lr->old_ID,server_ID,ENCRPT_ID_SIZE-1);
-//ngx_memcpy(lr->old_ID,retNewID,ENCRPT_ID_SIZE);
+	//åœ¨ç¬¬ä¸€æ¬¡åˆ†é…å‡º(IP,ID)çš„nodeæ—¶ï¼Œlast_slab_IDå°±ç½®ä¸ºnull
+	memset(lr->last_slab_ID,'\0',sizeof(lr->last_slab_ID));//ä¿å­˜
+	ngx_memcpy(lr->last_slab_ID,server_ID,ENCRPT_ID_SIZE);
+	ngx_memcpy(lr->slab_ID,server_ID,ENCRPT_ID_SIZE);//
+	lr->pass_count = 0;
+//ngx_memcpy(lr->slab_ID,retNewID,ENCRPT_ID_SIZE);
 
-	//ngx_log_error(8, r->connection->log, 0, "sxxx-IDnew-in lookup:%i",(int )lr->old_ID);
+	//ngx_log_error(8, r->connection->log, 0, "sxxx-IDnew-in lookup:%i",(int )lr->slab_ID);
 
 	// lr->ip_int=ngx_http_variable_binary_remote_addr();
 	// r->connection->addr_text;
@@ -549,132 +503,431 @@ static ngx_int_t ngx_http_ipslab_lookup(ngx_http_request_t *r,
 	ngx_rbtree_insert(&conf->sh->rbtree, node);
 
 	ngx_queue_insert_head(&conf->sh->queue, &lr->queue);
-	//memcpy(server_ID, lr->old_ID, ENCRPT_ID_SIZE);
+	//memcpy(server_ID, lr->slab_ID, ENCRPT_ID_SIZE);
 	return 1;
-}
+}/**/
 static void ipslab_post_handler(ngx_http_request_t * r) {
 
 	fprintf(stderr, "%s", "sxx-fpf-mytest_post_handler");
-	//Èç¹ûÃ»ÓĞ·µ»Ø200ÔòÖ±½Ó°Ñ´íÎóÂë·¢»ØÓÃ»§
+	//fprintf(stderr,"sxx-fpf-mytest_post_handler %s",r->out);
+	//å¦‚æœæ²¡æœ‰è¿”å›200åˆ™ç›´æ¥æŠŠé”™è¯¯ç å‘å›ç”¨æˆ·
 	if (r->headers_out.status != NGX_HTTP_OK) {
+		fprintf(stderr, "%s", "ipslab_post_handler r->headers_out.status != NGX_HTTP_OK");
 		ngx_http_finalize_request(r, r->headers_out.status);
-		return;
+		return ;
 	}
-	//µ±Ç°ÇëÇóÊÇ¸¸ÇëÇó£¬Ö±½ÓÈ¡ÆäÉÏÏÂÎÄ
+	//å½“å‰è¯·æ±‚æ˜¯çˆ¶è¯·æ±‚ï¼Œç›´æ¥å–å…¶ä¸Šä¸‹æ–‡
+	ngx_http_ipslab_ctx_t* myctx = ngx_http_get_module_ctx(r,
+			ngx_http_ipslab_module);
+
+	ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0,
+			"sxx-log-mytest_post_handlerctx [%s]", myctx->out_ctx->buf->pos);
+	ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0,
+			"sxx-log-mytest_post_handlerctx %d", myctx->out_ctx->buf->last-myctx->out_ctx->buf->pos);
+	fprintf(stderr, "%s", "sxx-fpf-mytest_post_handler");
+	 r->headers_out.status = NGX_HTTP_OK;
+	ngx_int_t ret = ngx_http_send_header(r);
+	ret = ngx_http_output_filter(r, myctx->out_ctx);
+
+	//æ³¨æ„ï¼Œè¿™é‡Œå‘é€å®Œå“åº”åå¿…é¡»æ‰‹åŠ¨è°ƒç”¨ngx_http_finalize_request
+	//ç»“æŸè¯·æ±‚ï¼Œå› ä¸ºè¿™æ—¶httpæ¡†æ¶ä¸ä¼šå†å¸®å¿™è°ƒç”¨å®ƒ
+	ngx_http_finalize_request(r, ret);
+	return ;
+
+}
+/*static void ipslab_post_handler_for_nonhtml(ngx_http_request_t * r) {
+
+	fprintf(stderr, "%s", "sxx-fpf-mytest_post_handler");
+	//å¦‚æœæ²¡æœ‰è¿”å›200åˆ™ç›´æ¥æŠŠé”™è¯¯ç å‘å›ç”¨æˆ·
+	if (r->headers_out.status != NGX_HTTP_OK) {
+		fprintf(stderr, "%s", "ipslab_post_handler r->headers_out.status != NGX_HTTP_OK");
+		ngx_http_finalize_request(r, r->headers_out.status);
+		return ;
+	}
+	//å½“å‰è¯·æ±‚æ˜¯çˆ¶è¯·æ±‚ï¼Œç›´æ¥å–å…¶ä¸Šä¸‹æ–‡
 	ngx_http_ipslab_ctx_t* myctx = ngx_http_get_module_ctx(r,
 			ngx_http_ipslab_module);
 
 	ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0,
 			"sxx-log-mytest_post_handlerctx %s", myctx->out_ctx->buf->pos);
+	ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0,
+			"sxx-log-mytest_post_handlerctx %d", myctx->out_ctx->buf->last-myctx->out_ctx->buf->pos);
 	fprintf(stderr, "%s", "sxx-fpf-mytest_post_handler");
 	// system("C:\\Users\\shao\\Desktop\\JsPTest\\run.bat");
 	// system("C:/Users/shao/Desktop/JsPTest/run.bat");
 	// system("C://Users//shao//Desktop//JsPTest//run.bat");
-	//ÉèÖÃContent-Type£¬×¢Òâºº×Ö±àÂëĞÂÀË·şÎñÆ÷Ê¹ÓÃÁËGBK
-	/* 	static ngx_str_t type = ngx_string("text/plain; charset=GBK");
-	 r->headers_out.content_type = type;
-	 r->headers_out.status = NGX_HTTP_OK;
-	 sssssss
-	 r->connection->buffered |= NGX_HTTP_WRITE_BUFFERED;*/
+	//è®¾ç½®Content-Typeï¼Œæ³¨æ„æ±‰å­—ç¼–ç æ–°æµªæœåŠ¡å™¨ä½¿ç”¨äº†GBK
+	// 	static ngx_str_t type = ngx_string("text/plain; charset=GBK");
+	// r->headers_out.content_type = type;
+	// r->headers_out.status = NGX_HTTP_OK;
+	 //sssssss
+	// r->connection->buffered |= NGX_HTTP_WRITE_BUFFERED;
 	ngx_int_t ret = ngx_http_send_header(r);
 	// = ngx_http_output_filter(r, &out);
 	ret = ngx_http_output_filter(r, myctx->out_ctx);
 
-	//×¢Òâ£¬ÕâÀï·¢ËÍÍêÏìÓ¦ºó±ØĞëÊÖ¶¯µ÷ÓÃngx_http_finalize_request
-	//½áÊøÇëÇó£¬ÒòÎªÕâÊ±http¿ò¼Ü²»»áÔÙ°ïÃ¦µ÷ÓÃËü
+	//æ³¨æ„ï¼Œè¿™é‡Œå‘é€å®Œå“åº”åå¿…é¡»æ‰‹åŠ¨è°ƒç”¨ngx_http_finalize_request
+	//ç»“æŸè¯·æ±‚ï¼Œå› ä¸ºè¿™æ—¶httpæ¡†æ¶ä¸ä¼šå†å¸®å¿™è°ƒç”¨å®ƒ
 	ngx_http_finalize_request(r, ret);
-	return;
+	return ;
+
+}*/
+
+/*ngx_int_t copy_a_node_element(const GumboElement* srcnode,GumboElement* dstnode){
+	dstnode->tag = srcnode->tag;
+
+	dstnode->end_pos->column = srcnode->end_pos->column;
+	dstnode->end_pos->line = srcnode->end_pos->line;
+	dstnode->end_pos->offset = srcnode->end_pos->offset;
+
+
+	dstnode->
+
+}*/
+
+
+static GumboNode* find_body_node(const GumboNode* root) {
+//
+
+  const GumboVector* root_children = &root->v.element.children;
+  GumboNode* body = NULL;
+  for (unsigned int i = 0; i < root_children->length; ++i) {
+    GumboNode* child = root_children->data[i];
+    if (child->type == GUMBO_NODE_ELEMENT &&
+        child->v.element.tag == GUMBO_TAG_BODY) {
+      body = child;
+      break;
+    }
+  }
+return body;
+}
+static GumboSourcePosition* find_end_pos(GumboNode* node){
+	return &(node->v.element.end_pos);
 
 }
+static ngx_int_t insert_str(ngx_buf_t* buf,ngx_uint_t offset,ngx_str_t str){
+	//u_char* p_oldpos = buf->pos;
+	u_char* p_oldlast = buf->last;
+	ngx_uint_t remain_len = buf->last -buf->pos-offset;
+	char* p_tmp = malloc(remain_len);
+	memcpy(p_tmp,buf->pos+offset,remain_len);//å°†ååŠæ®µä¿ç•™ä¸‹æ¥
 
+	buf->last = p_oldlast+str.len;
+	ngx_memcpy(buf->pos+offset,str.data,str.len);//
+	ngx_memcpy(buf->pos+offset+str.len,p_tmp,remain_len);
+	return 1;
+
+}
+//å¯è¿­ä»£çš„æ£€æµ‹æŸä¸ªèŠ‚ç‚¹å¹¶å…¶å­èŠ‚ç‚¹æ˜¯å¦æœ‰é“¾æ¥ngx_array_t<packed_position>* link_vector
+ngx_uint_t find_links(const GumboNode* node,ngx_uint_t* count)
+{
+	ngx_uint_t* p_count=count;
+
+	if (node->type != GUMBO_NODE_ELEMENT) {
+	    return 0;
+	  }
+	//char href_str[]="href";
+	fprintf(stderr, "%s","sxx-fpf-in find links");
+
+	 if( node->v.element.tag == GUMBO_TAG_LINK || node->v.element.tag == GUMBO_TAG_IMG ||node->v.element.tag == GUMBO_TAG_SCRIPT){
+		 fprintf(stderr, "%s",
+			   		"sxx-fpf-find links a and link");
+		*p_count = (*p_count)+1;
+		 fprintf(stderr, "%s",
+				   		"sxx-fpf-find links a and link after 1for");
+	}
+
+
+	 fprintf(stderr, "%s",	"sxx-fpf-find links after 2if");
+	if(node->v.element.children.length>0){
+	const GumboVector* children = &(node->v.element.children);
+		fprintf(stderr, "%s",
+							   		"sxx-fpf-find links have sub tree");
+		for(unsigned int i=0;i<children->length;i++)
+		{
+			find_links(children->data[i],p_count);
+		}
+	}else{
+		fprintf(stderr, "%s","sxx-fpf-find links no sub tree");
+	}
+	return 1;
+}
+/*int get_crr_path(){
+	char buffer[1024] ;
+
+    //è·å–å½“å‰çš„å·¥ä½œç›®å½•ï¼Œæ³¨æ„ï¼šé•¿åº¦å¿…é¡»å¤§äºå·¥ä½œç›®å½•çš„é•¿åº¦åŠ ä¸€
+    char *p = getcwd(buffer , 40);
+    //char *dir = NULL;
+
+    fprintf(stderr,"get_crr_path-buffer:%s  p:%s size:%ld \n" , buffer , p , strlen(buffer));
+    //è·å–å½“å‰å·¥ä½œç›®å½•çš„åå­—
+  //  dir = (char *)get_current_dir_name();
+  //  fprintf(stderr,"get_crr_path-dir:%s \n" , dir);
+
+    char *twd = NULL ;
+    twd = getwd(buffer);
+    fprintf(stderr,"get_crr_path-buffer:%s  twd:%s \n" , buffer , twd);
+    return 0 ;
+	}*/
+ngx_buf_t* read_file_from_disk(ngx_http_request_t* r,const char* filePath){
+
+		FILE *f;
+	    size_t len;
+	    //è®¾æˆæœ€å¤§çš„300KB
+	    char buf[307200];
+	//    get_crr_path();
+	    f = fopen(filePath, "r");
+	    if (f) {
+	    	fprintf(stderr,"fopen ok\r\n");
+	        len = fread((void *) buf, 1, sizeof(buf), f);
+	        fclose(f);
+	       // duk_push_lstring(ctx, (const char *) buf, (duk_size_t) len);
+	        ngx_buf_t* out_buf = ngx_create_temp_buf(r->pool,len);
+	        ngx_memcmp(out_buf->pos,buf,len);
+	        out_buf->last=out_buf->pos+len;
+	        fprintf(stderr,"hx_code_len[%ld]\r\n",len);
+	        return out_buf;
+	    //    printf("push %s",buf);
+	    } else {
+	    	fprintf(stderr,"fopen fail\r\n");
+	    	return NULL;
+	       // duk_push_undefined(ctx);
+	    }
+
+
+
+}
+/*ngx_buf_t* read_file_from_disk(ngx_http_request_t* r,u_char* filePath){
+		FILE *f;
+	    size_t len;
+	    //è®¾æˆæœ€å¤§çš„300KB
+	    char buf[307200];
+
+	    f = fopen(filePath, "rb");
+	    if (f) {
+
+	        len = fread((void *) buf, 1, sizeof(buf), f);
+	        fclose(f);
+	       // duk_push_lstring(ctx, (const char *) buf, (duk_size_t) len);
+	        ngx_buf_t* out_buf = ngx_create_temp_buf(r->pool,len);
+	        ngx_memcmp(out_buf->pos,buf,len);
+	        fprintf(stderr,"push hx code ok\r\n");
+	        return out_buf;
+	    //    printf("push %s",buf);
+	    } else {
+	    	fprintf(stderr,"push hx code fail\r\n");
+	    	return NULL;
+	       // duk_push_undefined(ctx);
+	    }
+
+	ngx_pool_cleanup_t             *cln;
+    ngx_pool_cleanup_file_t        *clfn;
+    ngx_file_t                     *file;
+    file = ngx_palloc(r->pool, sizeof(ngx_file_t));
+    if (file == NULL ) {
+        return NULL;
+    }
+
+    u_char *realfilename = filePath;
+    file->fd = ngx_open_file(realfilename, NGX_FILE_RDONLY|NGX_FILE_NONBLOCK, NGX_FILE_OPEN, 0);
+    if(file->fd<=0){
+    	fprintf(stderr,"open fail");
+    }
+    file->name.len = ngx_strlen(realfilename);
+    file->name.data = realfilename;
+    file->log = r->pool->log;
+    fprintf(stderr,"file info file->info.st_size:[%ld]",file->info.st_size);
+    //if (ngx_fd_info(file->fd, &file->) == -1) {
+
+    ngx_buf_t* buf = ngx_create_temp_buf(r->pool,file->info.st_size);
+	int n = ngx_read_file(file, buf->pos, file->info.st_size,  file->offset);
+	buf->last = buf->pos+file->info.st_size;
+	fprintf(stderr,"read file get size:[%d]",n);
+	fprintf(stderr,"read file get size:[%s]",buf->pos);
+
+    cln = ngx_pool_cleanup_add(r->pool, sizeof(ngx_pool_cleanup_file_t));
+    if (cln == NULL) {
+        return NULL;
+    }
+    clfn = cln->data;//æ­¤å¤„è¦ç‰¹åˆ«æ³¨æ„ï¼Œè®©clfnæŒ‡é’ˆæŒ‡å‘ä¸Šé¢ngx_pool_cleanup_addå‡½æ•°å†…åˆ†é…çš„å­˜æ”¾ngx_pool_cleanup_file_tçš„ç©ºé—´ã€‚
+    clfn->fd = file->fd;
+    clfn->name = realfilename;
+    clfn->log = r->pool->log;
+    cln->handler = ngx_pool_cleanup_file;
+
+	return buf;
+}*/
+/*static void push_file_as_string(duk_context *ctx, const char *filename) {
+	read_file_from_disk
+
+
+    FILE *f;
+    size_t len;
+    //è®¾æˆæœ€å¤§çš„300KB
+    char buf[307200];
+
+    f = fopen(filename, "rb");
+    if (f) {
+
+        len = fread((void *) buf, 1, sizeof(buf), f);
+        fclose(f);
+        duk_push_lstring(ctx, (const char *) buf, (duk_size_t) len);
+        fprintf(stderr,"push hx code ok\r\n");
+    //    printf("push %s",buf);
+    } else {
+    	fprintf(stderr,"push hx code fail\r\n");
+        duk_push_undefined(ctx);
+    }
+}*/
+int obfuscate(duk_context *ctx,char* hx_code,int hx_code_len,const char* funcName,char* hx_cont,int hx_cont_len){
+//è¯·åœ¨å‰¯æœ¬å‡½æ•°ä¹‹å‰ctx = duk_create_heap_default();ä¹‹åduk_destroy_heap(ctx);
+	//æˆåŠŸè¿”å›1ï¼Œå¤±è´¥è¿”å›0
+	//åœ¨æœ¬å‡½æ•°å¤–æ‰§è¡Œåä½¿ç”¨duk_getå¾—åˆ°è¿”å›ç»“æœ
+	if (!ctx) {
+		return 1;
+	}
+
+	//push_file_as_string(ctx,hx_code_filePath);
+	duk_push_lstring(ctx, hx_code,hx_code_len);
+	duk_push_string(ctx, funcName);
+	if(duk_pcompile(ctx, DUK_COMPILE_FUNCTION)==0){
+		fprintf(stderr,"compile ok\r\n");
+		fprintf(stderr,"cont[%s]\r\n",hx_cont);
+		fprintf(stderr,"cont[%d]\r\n",hx_cont_len);
+
+		duk_push_lstring(ctx,hx_cont,hx_cont_len);//å‹è¿›å‚æ•°ï¼Œå³è¦æ··æ·†çš„å†…å®¹
+		if(duk_pcall(ctx,1)==0){
+			printf("call ok");
+
+				return 1;
+			}else{
+				fprintf(stderr,"call fail\r\n");
+			}
+
+	}else{
+		fprintf(stderr,"compile fail\r\n");
+	}
+//	printf("Done\n");
+	return 0;
+}
+
+
+//å­è¯·æ±‚ç»“æŸæ—¶çš„å›è°ƒæ–¹æ³•
+//1.è®¡ç®—æ€»size; 2.åˆ†é…å¤§å—å†…;3.è°ƒç”¨gumboæˆ–duktapeè¿›è¡Œå¤„ç†ã€‚
 static ngx_int_t ipslab_subrequest_post_handler(ngx_http_request_t *r,
 		void *data, ngx_int_t rc) {
 
-	//µ±Ç°ÇëÇórÊÇ×ÓÇëÇó£¬ËüµÄparent³ÉÔ±¾ÍÖ¸Ïò¸¸ÇëÇó
-	ngx_http_request_t *pr = r->parent;
-	//×¢Òâ£¬ÉÏÏÂÎÄÊÇ±£´æÔÚ¸¸ÇëÇóÖĞµÄ£¨²Î¼û5.6.5½Ú£©£¬ËùÒÔÒªÓÉprÖĞÈ¡ÉÏÏÂÎÄ¡£
-//ÆäÊµÓĞ¸ü¼òµ¥µÄ·½·¨£¬¼´²ÎÊıdata¾ÍÊÇÉÏÏÂÎÄ£¬³õÊ¼»¯subrequestÊ±
-//ÎÒÃÇ¾Í¶ÔÆä½øĞĞÉèÖÃÁËµÄ£¬ÕâÀï½öÎªÁËËµÃ÷ÈçºÎ»ñÈ¡µ½¸¸ÇëÇóµÄÉÏÏÂÎÄ
-	//ngx_http_mytest_ctx_t* myctx = ngx_http_get_module_ctx(pr, ngx_http_mytest_module);
 
+
+	//å½“å‰è¯·æ±‚ræ˜¯å­è¯·æ±‚ï¼Œå®ƒçš„parentæˆå‘˜å°±æŒ‡å‘çˆ¶è¯·æ±‚
+	ngx_http_request_t *pr = r->parent;
 	pr->headers_out.status = r->headers_out.status;
 	pr->headers_out.content_type = r->headers_out.content_type;
-	//Èç¹û·µ»ØNGX_HTTP_OK£¨Ò²¾ÍÊÇ200£©ÒâÎ¶×Å·ÃÎÊĞÂÀË·şÎñÆ÷³É¹¦£¬½Ó×Å½«
-//¿ªÊ¼½âÎöhttp°üÌå
+
+
+	GumboOutput* output;
+	const char* content;	//int length;
+	 //  int duktape_temp;
+	//å¦‚æœè¿”å›NGX_HTTP_OKï¼ˆä¹Ÿå°±æ˜¯200ï¼‰æ„å‘³ç€è®¿é—®ç¬¬ä¸‰æ–¹æœåŠ¡å™¨æˆåŠŸï¼Œæ¥ç€å°†å¼€å§‹è§£æhttpåŒ…ä½“
+	fprintf(stderr, "%s",
+				"sxx-fpf-mytest_subrequest_post_handler have include gumbo");
 	if (r->headers_out.status == NGX_HTTP_OK) {
-
-		//ÔÚ²»×ª·¢ÏìÓ¦Ê±£¬bufferÖĞ»á±£´æ×ÅÉÏÓÎ·şÎñÆ÷µÄÏìÓ¦¡£ÌØ±ğÊÇÔÚÊ¹ÓÃ
-//·´Ïò´úÀíÄ£¿é·ÃÎÊÉÏÓÎ·şÎñÆ÷Ê±£¬Èç¹ûËüÊ¹ÓÃupstream»úÖÆÊ±Ã»ÓĞÖØ¶¨Òå
-//input_filter·½·¨£¬upstream»úÖÆÄ¬ÈÏµÄinput_filter·½·¨»áÊÔÍ¼
-//°ÑËùÓĞµÄÉÏÓÎÏìÓ¦È«²¿±£´æµ½buffer»º³åÇøÖĞ
+		fprintf(stderr, "sxx-type[%s]",r->headers_out.content_type.data);
+				//åœ¨ä¸è½¬å‘å“åº”æ—¶ï¼Œbufferä¸­ä¼šä¿å­˜ç€ä¸Šæ¸¸æœåŠ¡å™¨çš„å“åº”ã€‚ç‰¹åˆ«æ˜¯åœ¨ä½¿ç”¨
+		fprintf(stderr, "%s","sxx-fpfsubrequest_postNGX_HTTP_OK");
+		//åœ¨ä¸è½¬å‘å“åº”æ—¶ï¼Œbufferä¸­ä¼šä¿å­˜ç€ä¸Šæ¸¸æœåŠ¡å™¨çš„å“åº”ã€‚ç‰¹åˆ«æ˜¯åœ¨ä½¿ç”¨
+		//åå‘ä»£ç†æ¨¡å—è®¿é—®ä¸Šæ¸¸æœåŠ¡å™¨æ—¶ï¼Œå¦‚æœå®ƒä½¿ç”¨upstreamæœºåˆ¶æ—¶æ²¡æœ‰é‡å®šä¹‰
+		//input_filteræ–¹æ³•ï¼Œupstreamæœºåˆ¶é»˜è®¤çš„input_filteræ–¹æ³•ä¼šè¯•å›¾
+		//æŠŠæ‰€æœ‰çš„ä¸Šæ¸¸å“åº”å…¨éƒ¨ä¿å­˜åˆ°bufferç¼“å†²åŒºä¸­
 		ngx_buf_t* pRecvBuf = &r->upstream->buffer;
-
-		ngx_buf_t *b;
-		size_t len;
 		ngx_http_ipslab_ctx_t* out = (ngx_http_ipslab_ctx_t *) data;
-		//8888r->upstream->resolved->
-		//88888for(;pRecvBuf->last_buf != 1;pRecvBuf = pRecvBuf->);
-		len = pRecvBuf->last - pRecvBuf->pos;
-		b = ngx_create_temp_buf(pr->pool, len);
-		//b= out->out_ctx->buf;
-
-		fprintf(stderr, "%s",
-				"sxx-fpf-mytest_subrequest_post_handler before memcpy");
-
-		// ngx_memcpy(pr->out->buf->pos,pRecvBuf->pos,(u_char *)pRecvBuf->last-(u_char *)pRecvBuf->pos);//((u_char *)pRecvBuf->last-(u_char *)pRecvBuf->pos)
-		ngx_memcpy(b->pos, pRecvBuf->pos, len); //((u_char *)pRecvBuf->last-(u_char *)pRecvBuf->pos)
-		/* ngx_str_t str_keshan = ngx_string("kehsan");
-		 len =str_keshan.len;//pRecvBuf->last-pRecvBuf->pos;
-
-		 ngx_memcpy(b->pos,str_keshan.data,len);*/
-		fprintf(stderr, "len%d", (int) len);
-
-		b->last = b->pos + len;
-		b->last_buf = 1;
-		fprintf(stderr, "%s", "I am here");
-		out->out_ctx->buf = b;
+		size_t len = pRecvBuf->last - pRecvBuf->pos;
+		pRecvBuf->last = pRecvBuf->pos + len;
+		pRecvBuf->last_buf = 1;
+		out->out_ctx->buf = pRecvBuf;
 		out->out_ctx->next = NULL;
-		//for(;pRecvBuf->pos != pRecvBuf->last;)
+		ngx_str_t html_rspnd = ngx_string("text/html");
+		ngx_str_t js_rspnd = ngx_string("application/javascript");
+		if(0 == ngx_strcmp(&(r->headers_out.content_type), &html_rspnd)){
+			fprintf(stderr, "%s",
+							"sxx-fpf-mytest_subrequest_post_handler ngx_strcmp(type)");
+			content = (char *)pRecvBuf->pos;
+		   output = gumbo_parse_with_options(&kGumboDefaultOptions,content, len);
+			   ngx_uint_t tmp_count;//ç•™å‡ºè¯·æ±‚èµ„æºï¼ˆjs,css,pngç­‰ï¼‰çš„æ¬¡æ•°ã€‚
+			   	find_links(output->root,&tmp_count);
+				 ngx_str_t insrt_str_part1= ngx_string("<input id='hxID' style='display:none;' value='");
+				 ngx_str_t insrt_str_part3= ngx_string("'></input>");
+
+				 ngx_str_t insrt_str_part2 = ngx_string(out->hxID.data);
+				// ngx_buf_t* new_buf = ngx_create_temp_buf(pr->pool,insrt_str_part1.len+insrt_str_part2.len+insrt_str_part3.len);
+				 ngx_str_t new_block;
+				 new_block.len= insrt_str_part1.len+ENCRPT_ID_SIZE+insrt_str_part3.len;
+				 new_block.data = ngx_palloc(r->pool, new_block.len);
+				 ngx_snprintf(new_block.data,new_block.len,"%V%s%V",&insrt_str_part1,insrt_str_part2.data,&insrt_str_part3);
+				 GumboSourcePosition* body_end = (GumboSourcePosition*)find_end_pos((GumboNode*)find_body_node(output->root));
+				 insert_str(pRecvBuf,body_end->offset,new_block);
+				 gumbo_destroy_output(&kGumboDefaultOptions, output);
+		}else if(0 == ngx_strcmp(&(r->headers_out.content_type), &js_rspnd)){
+			fprintf(stderr,"it is js response\r\n");
+				duk_context *ctx;
+				ctx = duk_create_heap_default();
+					if (!ctx) {
+						return 1;
+					}
 
 
-		fprintf(stderr, "%s", "I am here");
-		fprintf(stderr, "%s",
-				"sxx-fpf-mytest_subrequest_post_handler after memcpy");
+					ngx_buf_t* buf=read_file_from_disk(r,F_PATH);
+					//b æ˜¯buf(ngx_buf_t*)
+					if(buf){
+						int hx_code_len = buf->last-buf->pos;
+						fprintf(stderr,"sxx-IsJSSp-hx_code_len[%d]",hx_code_len);
+						int hx_cont_len = len;
 
-	} else {
-		fprintf(stderr, "%s",
-				"sxx-fpf-mytest_subrequest_post_handler  r->headers_out.status != NGX_HTTP_OK");
+						if(obfuscate(ctx,(char*)buf->pos,hx_code_len,"compress_rename_local_variable",(char*)pRecvBuf->pos,hx_cont_len)==1){
+							//str = duk_get_string(ctx, -1);
+							fprintf(stderr,"obfuscate-get string[%s]\r\n",(char*)duk_get_string(ctx, -1));
+							char* tmp_str = (char*)duk_get_string(ctx, -1);
 
-	}
+							ngx_memcpy(pRecvBuf->pos,tmp_str,strlen(tmp_str));
+							pRecvBuf->last = pRecvBuf->pos+strlen(tmp_str);
+							fprintf(stderr,"obfuscate-tmp_str[%s]\r\n",tmp_str);
+							fprintf(stderr,"obfuscate-tmp_str[%ld]\r\n",strlen(tmp_str));
+							fprintf(stderr,"obfuscate-pRecvBuf->pos[%s]\r\n",pRecvBuf->pos);
+							 pr->headers_out.content_length_n = strlen(tmp_str);
+						}else{
+							fprintf(stderr,"obfuscate-fail");
+						}/**/
+					}
 
-	//ÕâÒ»²½ºÜÖØÒª£¬ÉèÖÃ½ÓÏÂÀ´¸¸ÇëÇóµÄ»Øµ÷·½·¨
-	pr->write_event_handler = ipslab_post_handler;
+					duk_destroy_heap(ctx);
 
-	return NGX_OK;
+					 pr->headers_out.content_offset = r->headers_out.content_offset;
+
+		}
+		else {//éHTMLå“åº”
+			fprintf(stderr, "%s","sxx-response not HTML");
+
+	    pr->headers_out.content_length_n = r->headers_out.content_length_n;
+	    pr->headers_out.content_offset = r->headers_out.content_offset;
+	   // pr->headers_out.status
+	   // pr->connection->
+	    fprintf(stderr, "sxx-NOHTML length %ld",pr->headers_out.content_length_n);
+	    fprintf(stderr, "sxx-NOHTML length [%s]",out->out_ctx->buf->pos);}
+	}/*else{//
+		fprintf(stderr, "%s","sxx-fpf-mytest_subrequest_post_handler  r->headers_notOK");
+
+	}*/
+
+		//è¿™ä¸€æ­¥å¾ˆé‡è¦ï¼Œè®¾ç½®æ¥ä¸‹æ¥çˆ¶è¯·æ±‚çš„å›è°ƒæ–¹æ³•
+		pr->write_event_handler = ipslab_post_handler;
+
+		return NGX_OK;
+
 }
 
-/*static ngx_int_t
- ngx_func_build_warningPage(ngx_buf_t* b, ngx_int_t hxID,ngx_http_request_t* r)
- {
- ngx_int_t maxlen;
- ngx_str_t str0 = ngx_string("<html><body><h1>a.html,Î»ÖÃÔÚE:\\ProgramNoInstall\\nginx\\html</h1><a id = 'OneHref' href= '");
-
- ngx_str_t str1 = ngx_string("' onclick = 'doSomething()'>·ÃÎÊb/b.nmj </a><script type='text/javascript'> var hxID = ");
- ngx_str_t str2 = ngx_string(";\r\n function doSomething()\r\n{\r\nvar x= document.getElementById('OneHref');x.href = x.href+'/?hxID='+hxID;alert(x.href);}</script></body></html>");
- maxlen = str0.len+(r->host_end-r->host_start)+r->args.len+str1.len+sizeof(ngx_int_t)+str2.len;
- //b=ngx_create_temp_buf(r->pool,response.len);
- b=ngx_create_temp_buf(r->pool,maxlen);
- if(b == NULL){
- return NGX_HTTP_INTERNAL_SERVER_ERROR;
- }
- ngx_snprintf(b->pos,maxlen,(char *)str0.data,r->host_end,r->args.data,str1.data,&hxID,str2.data);
- ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0, "sxx-log-ngx_func_build_warningPage:");
- fprintf(stderr, "sxx-fpf-ngx_func_build_warningPage:%s",b->pos);
- return NGX_OK;
- }*/
-ngx_int_t ipslab_ip_atoi(ngx_str_t str_ip)
+static ngx_uint_t ipslab_ip_atoui(ngx_str_t str_ip)
 {
-	ngx_int_t int_ip=-1;
+	ngx_uint_t uint_ip=0;
 	struct in_addr addr;
 
  char* char_ip = malloc((str_ip.len+1)*sizeof(char));
@@ -682,102 +935,146 @@ ngx_int_t ipslab_ip_atoi(ngx_str_t str_ip)
  *(char_ip+str_ip.len) ='\0' ;
 	    if(inet_aton(char_ip,&addr))
 	    {
-	        int_ip = ntohl(addr.s_addr);
+	        uint_ip = ntohl(addr.s_addr);
 	    }
-	    return int_ip;
+	    return uint_ip;
 
 }
 /*static ngx_int_t ngx_http_ipslab_input_filter(void *data, ssize_t bytes){
 
 	return
 }*/
-//handle·½·¨£¬
+//handleæ–¹æ³•ï¼Œ
+ngx_buf_t* build_content_response(ngx_http_request_t *r,const char* ID_frm_srvr){
+	//æ„é€ ä¸€ä¸ªé¡µé¢ï¼Œå«æœ‰åŸè¯·æ±‚çš„urlï¼ŒåŒæ—¶ æ³¨å…¥ID
+	//r:1.åœ¨r->pool ä¸­åˆ†é…bufï¼Œ2.ä½¿ç”¨r->uri
+	ngx_buf_t *b;
+	ngx_int_t maxlen;
+	ngx_str_t str0 = ngx_string("<html>\r\n<body>\r\n<h1>A Fail page</h1><div>a page to revisit visit this website,please click 'TRY AGAIN' to start</div>\r\n");
+	ngx_str_t str1 = ngx_string("<script src=\"https://cdnjs.cloudflare.com/ajax/libs/blueimp-md5/2.10.0/js/md5.min.js\"></script>");
+	ngx_str_t str2 = ngx_string("<a id = 'OneHref' href= '");
+	//ngx_str_t tmp_host = ngx_string("127.0.0.1:80");
+	ngx_str_t str4 = ngx_string("'>TRY AGAIN</a>\r\n<input id='hxID' style='display:none;' value='");
+	ngx_str_t str5;
+		str5.len = ngx_strlen(ID_frm_srvr);
+		str5.data = ngx_palloc(r->pool,str5.len);
+		ngx_memcpy(str5.data,ID_frm_srvr,str5.len);
+	ngx_str_t str6 =ngx_string("'></input>\r\n</body>\r\n</html>");
+	maxlen = str0.len + str1.len + str2.len+r->uri.len + str4.len +str5.len +str6.len;
+	b = ngx_create_temp_buf(r->pool, maxlen);
+	if (b == NULL) {
+				return NULL;
+	}
+	ngx_snprintf(b->pos, maxlen, "%V%V%V%V%V%V%V", &str0,&str1,&str2, &r->uri,&str4,
+			&str5, &str6);
+	 //æ³¨æ„ï¼Œä¸€å®šè¦è®¾ç½®å¥½lastæŒ‡é’ˆ
+	b->last = b->pos + maxlen;
+	//å£°æ˜è¿™æ˜¯æœ€åä¸€å—ç¼“å†²åŒº
+	b->last_buf = 1;
+	//æ„é€ å‘é€æ—¶çš„ngx_chain_tç»“æ„ä½“
+	return b;
+}
+static bool is_html_request(ngx_str_t uri){
+	fprintf(stderr, "sxx-func is_html_request");
+	fprintf(stderr, "sxx-args:[%s]\n",uri.data);
+	ngx_str_t match = ngx_string("html");
+	u_char* p=ngx_strlcasestrn(uri.data,uri.data+uri.len,match.data,match.len-1);
+	if(p){
+		fprintf(stderr, "sxx-%s is_html_request",uri.data);
+		return true;
+	}
+	fprintf(stderr, "sxx-%s is not html_request",uri.data);
+	return false;
+}
+static bool is_img_request(ngx_str_t uri){
+	fprintf(stderr, "sxx-func is_img_request");
+	fprintf(stderr, "sxx-args:[%s]\n",uri.data);
+	ngx_str_t match_jpg = ngx_string("jpg");
+	ngx_str_t match_jpeg= ngx_string("jpeg");
+	ngx_str_t match_gif = ngx_string("gif");
+	ngx_str_t match_png = ngx_string("png");
+	u_char* p_jpg=ngx_strlcasestrn(uri.data,uri.data+uri.len,match_jpg.data,match_jpg.len-1);
+	u_char* p_jpeg=ngx_strlcasestrn(uri.data,uri.data+uri.len,match_jpeg.data,match_jpeg.len-1);
+	u_char* p_gif=ngx_strlcasestrn(uri.data,uri.data+uri.len,match_gif.data,match_gif.len-1);
+	u_char* p_png=ngx_strlcasestrn(uri.data,uri.data+uri.len,match_png.data,match_png.len-1);
+	if(p_jpg||p_jpeg||p_gif||p_png){
+		fprintf(stderr, "sxx-%s is_img_request",uri.data);
+		return true;
+	}
+	fprintf(stderr, "sxx-%s is not _img_request",uri.data);
+	return false;
+}
 static ngx_int_t ngx_http_ipslab_handler(ngx_http_request_t *r) {
-	//1.´ÓuriÖĞÌáÈ¡³öID£»2.ÓÃipÎª¹Ø¼ü×Ö·ÃÎÊÒ»´Î¹²ÏíÄÚ´æ£¬½Úµã´æÔÚÔò¸üĞÂ»òÕß½Úµã²»´æÔÚÔò·ÖÅä£¬ÎŞÂÛÈçºÎ×Óº¯Êı·µ»Ø×îĞÂµÄID¡£
+	//1.ä»uriä¸­æå–å‡ºIDï¼›2.ç”¨ipä¸ºå…³é”®å­—è®¿é—®ä¸€æ¬¡å…±äº«å†…å­˜ï¼ŒèŠ‚ç‚¹å­˜åœ¨åˆ™æ›´æ–°æˆ–è€…èŠ‚ç‚¹ä¸å­˜åœ¨åˆ™åˆ†é…ï¼Œæ— è®ºå¦‚ä½•å­å‡½æ•°è¿”å›æœ€æ–°çš„IDã€‚
 	ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0,
 			"sxx-ngx_http_ipslab_handler:before ngx_abstract_hxID");
 	fprintf(stderr, "sxx-ngx_http_ipslab_handler:before ngx_abstract_hxID");
 	u_char* client_ID;
-	u_char* server_ID;
+	u_char* server_ID_now_used;
 	ngx_int_t id_begin_pos=0;
 	ngx_int_t id_end_pos=0;
 	ngx_int_t clientid_now_len;
 	ngx_uint_t ip_int;
 	// ngx_str_t tmpstr = ngx_string("?hxID=");
 	// ngx_int_t ID_POS_MIN=tmpstr.len;
-	ngx_int_t id_pos = ID_POS_MIN - 1;   //urlÖĞhxID=ºÅºóÃæ¿ªÊ¼µÄÎ»ÖÃ£¬³õÊ¼ÖµÎª-1.
+	ngx_int_t id_pos = ID_POS_MIN - 1;   //urlä¸­hxID=å·åé¢å¼€å§‹çš„ä½ç½®ï¼Œåˆå§‹å€¼ä¸º-1.
 	ngx_http_ipslab_conf_t *conf;
 	ngx_http_ipslab_ctx_t* myctx;
-
-	/*int crv_len;
-	 unsigned int nid;
-	EC_builtin_curve *curves;
-	  crv_len = EC_get_builtin_curves(NULL, 0);
-	    curves = (EC_builtin_curve *)malloc(sizeof(EC_builtin_curve) * crv_len);
-	    // »ñÈ¡ÍÖÔ²ÇúÏßÁĞ±í
-	    EC_get_builtin_curves(curves, crv_len);
-	    // Ñ¡È¡Ò»ÖÖÍÖÔ²ÇúÏß
-	    for(int i=0;i<crv_len;i++)
-	    {
-	    	nid=curves[i].nid;
-	      fprintf(stderr,"sxx-fpf i:%d",i);
-	      fprintf(stderr,"sxx-fpf nid:%d",nid);
-	      fprintf(stderr,"sxx-fpf comment:%s\r\n",curves[i].comment);
-	    }*/
-ngx_int_t rc;
-	//¸øclient_ID ·ÖÅäÄÚ´æ²¢Ìî³äÄÚÈİ
-	client_ID = ngx_palloc(r->pool, ENCRPT_ID_SIZE);
-	server_ID = ngx_palloc(r->pool, ENCRPT_ID_SIZE);
-	ngx_memset(server_ID,'\0',ENCRPT_ID_SIZE);
-	for(int i =0;i<32;i++)
-			{
-				fprintf(stderr, "sxx-sxx-server_ID:after palloc%c\r\n",server_ID[i]);
-				ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0,
-								"sxx-log-ngx_http_mytest_handler sub_location:%c\r\n",
-								server_ID[i]);
-			}
-	server_ID[ENCRPT_ID_SIZE-1] = '\0';
+	ngx_int_t rc;
+	//ç»™client_ID åˆ†é…å†…å­˜å¹¶å¡«å……å†…å®¹
+	client_ID = ngx_palloc(r->pool, ENCRPT_ID_SIZE+1);
+	server_ID_now_used = ngx_palloc(r->pool, ENCRPT_ID_SIZE+1);
+	ngx_memset(server_ID_now_used,'\0',ENCRPT_ID_SIZE+1);
+	server_ID_now_used[ENCRPT_ID_SIZE] = '\0';
 	ngx_abstract_hxID(r, &id_begin_pos,&id_end_pos);
 	clientid_now_len =  id_end_pos-id_begin_pos;
 	ngx_memcpy(client_ID, r->args.data + id_begin_pos,clientid_now_len);
 	client_ID[clientid_now_len] ='\0' ;
 
-	ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0,
-			"sxx-ngx_http_ipslab_handler:after ngx_abstract_hxID");
-	fprintf(stderr, "sxx-ngx_http_ipslab_handler: after ngx_abstract_hxID");
 
-
-	//ip_int = ngx_atoi(r->connection->addr_text.data,r->connection->addr_text.len);
-	ip_int = ipslab_ip_atoi(r->connection->addr_text);
-	ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0,
-					"sxx-log-ngx_http_ipslab_handler:ipint %V",&r->connection->addr_text);
-
-
-
-	ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0,
-				"sxx-log-ngx_http_ipslab_handler:ipint %u",ip_int);
-	fprintf(stderr, "sxx-fpf-ngx_http_ipslab_handler: ip_int %i",(int)ip_int);
-
+	ip_int = ipslab_ip_atoui(r->connection->addr_text);
 
 	conf = ngx_http_get_module_main_conf(r, ngx_http_ipslab_module);
 	fprintf(stderr, "sxx-fpf-ngx_http_ipslab_handler: 667");
+	fprintf(stderr, "sxx-bool is_html_R-r->uri:[%s]\r\n",r->uri.data);
+	bool is_html_R = is_html_request(r->uri);
+	bool is_img_R =is_img_request(r->uri);
+	bool check_ID_flag=0;
 
-	//fprintf(stderr, "sxx-fpf-ngx_http_ipslab_handler:node %s",(char*));
-	ngx_shmtx_lock(&conf->shpool->mutex);
-	fprintf(stderr, "sxx-fpf-ngx_http_ipslab_handler: lock shmtx");
+	if(is_html_R){//ä½¿ç”¨
+		fprintf(stderr, "sxx-is html request");
+			ngx_shmtx_lock(&conf->shpool->mutex);
+			fprintf(stderr, "sxx-fpf-ngx_http_ipslab_handler: lock shmtx");
 
-	ngx_http_ipslab_lookup(r, conf, ip_int, server_ID); //±éÀú²éÕÒ£¬ÓĞipµÄ²úÉúnextID£¬²¢·µ»ØÓÃÓÚ±È½Ï¡£Ã»ÓĞIDµÄÌí¼ÓĞÂ¼ÍÂ¼£¬²¢·µ»ØID
-	fprintf(stderr, "sxx-fpf-ngx_http_ipslab_handler: after lookup serverID:%s]",server_ID);
-	ngx_shmtx_unlock(&conf->shpool->mutex);
+			ngx_http_ipslab_lookup_ID_update_forward(r, conf, ip_int, server_ID_now_used); //éå†æŸ¥æ‰¾ï¼Œæœ‰ipçš„äº§ç”ŸnextIDï¼Œå¹¶è¿”å›ç”¨äºæ¯”è¾ƒã€‚æ²¡æœ‰IDçš„æ·»åŠ æ–°çºªå½•ï¼Œå¹¶è¿”å›ID
+			fprintf(stderr, "sxx-fpf-ngx_http_ipslab_handler: after lookup serverID:%s]",server_ID_now_used);
+			ngx_shmtx_unlock(&conf->shpool->mutex);
+			if (0 == ngx_memcmp(server_ID_now_used, client_ID,ENCRPT_ID_SIZE)){
+				fprintf(stderr, "sxx-fpf-ngx_http_ipslab_handler: ID is same id check pass");
+				check_ID_flag =1;
+			}
+
+	}else{
+		fprintf(stderr, "sxx-is not html request set flag=1");
+		check_ID_flag=1;
+		//å¦‚æœæ˜¯éHTMLæ–‡ä»¶è¯·æ±‚ã€‚åˆ™ä¸last_slab_IDçš„md5æ¯”è¾ƒã€‚é¢å¤–é¢„å¤‡äº†server_another_slab_IDæ˜¯ä¾›åé¢è¿­ä»£å¼€å‘ä½¿ç”¨
+		/*	u_char* server_another_slab_ID = ngx_palloc(r->pool, ENCRPT_ID_SIZE+1);
+			ngx_memset(server_another_slab_ID,'\0',ENCRPT_ID_SIZE+1);
+
+			ngx_shmtx_lock(&conf->shpool->mutex);
+			ngx_http_ipslab_lookup_no_update(r, conf, ip_int, server_another_slab_ID,server_ID_now_used);
+			fprintf(stderr, "sxx-after no update,server_another_slab_ID:%s,server_ID_now_used:%s.",server_another_slab_ID,server_ID_now_used);
+			ngx_shmtx_unlock(&conf->shpool->mutex);*/
+	}
 
 
-
-	if (0 == ngx_memcmp(server_ID, client_ID,ENCRPT_ID_SIZE)) {
+	//if (0 == ngx_memcmp(server_ID_now_used, client_ID,ENCRPT_ID_SIZE)) {
+	if(check_ID_flag){
 		fprintf(stderr, "sxx-client_ID == server_ID\r\n");
 		ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0,
 				"sxx-sxx-client_ID:%s, == server_ID:%s\r\n", client_ID,
-				server_ID);
-		//´´½¨httpÉÏÏÂÎÄ
+				server_ID_now_used);
+		//åˆ›å»ºhttpä¸Šä¸‹æ–‡
 
 		myctx = ngx_http_get_module_ctx(r, ngx_http_ipslab_module);
 		// ngx_buf_t *b ;
@@ -789,30 +1086,32 @@ ngx_int_t rc;
 			// b = ngx_create_temp_buf(r->pool,50);
 			fprintf(stderr, "%s", "I am here");
 			myctx->out_ctx = ngx_palloc(r->pool, sizeof(ngx_chain_t));
+			//= ngx_string(server_ID);
+			ngx_str_set(&myctx->hxID,server_ID_now_used);
 			/*    myctx->out_ctx->buf=b;
 			 myctx->out_ctx->next=NULL;*/
-			//½«ÉÏÏÂÎÄÉèÖÃµ½Ô­Ê¼ÇëÇórÖĞ
+			//å°†ä¸Šä¸‹æ–‡è®¾ç½®åˆ°åŸå§‹è¯·æ±‚rä¸­
 			fprintf(stderr, "%s", "I am here");
 			ngx_http_set_ctx(r, myctx, ngx_http_ipslab_module);
 		}
 
-		// ngx_http_post_subrequest_t½á¹¹Ìå»á¾ö¶¨×ÓÇëÇóµÄ»Øµ÷·½·¨£¬²Î¼û5.4.1½Ú
+		// ngx_http_post_subrequest_tç»“æ„ä½“ä¼šå†³å®šå­è¯·æ±‚çš„å›è°ƒæ–¹æ³•ï¼Œå‚è§5.4.1èŠ‚
 		ngx_http_post_subrequest_t *psr = ngx_palloc(r->pool,
 				sizeof(ngx_http_post_subrequest_t));
 		if (psr == NULL) {
 			return NGX_HTTP_INTERNAL_SERVER_ERROR;
 		}
 
-		//ÉèÖÃ×ÓÇëÇó»Øµ÷·½·¨Îªmytest_subrequest_post_handler
+		//è®¾ç½®å­è¯·æ±‚å›è°ƒæ–¹æ³•ä¸ºmytest_subrequest_post_handler
 		psr->handler = ipslab_subrequest_post_handler;
 
-		//dataÉèÎªmyctxÉÏÏÂÎÄ£¬ÕâÑù»Øµ÷mytest_subrequest_post_handler
-		//Ê±´«ÈëµÄdata²ÎÊı¾ÍÊÇmyctx
+		//dataè®¾ä¸ºmyctxä¸Šä¸‹æ–‡ï¼Œè¿™æ ·å›è°ƒmytest_subrequest_post_handler
+		//æ—¶ä¼ å…¥çš„dataå‚æ•°å°±æ˜¯myctx
 		psr->data = myctx;
 
-		//×ÓÇëÇóµÄURIÇ°×ºÊÇ/list£¬ÕâÊÇÒòÎª·ÃÎÊĞÂÀË·şÎñÆ÷µÄÇëÇó±ØĞëÊÇÀà
-		//ËÆ/list=s_sh000001ÕâÑùµÄURI£¬ÕâÓë5.6.1½ÚÔÚnginx.confÖĞ
-		//ÅäÖÃµÄ×ÓÇëÇólocationÖĞµÄURIÊÇÒ»ÖÂµÄ
+		//å­è¯·æ±‚çš„URIå‰ç¼€æ˜¯/listï¼Œè¿™æ˜¯å› ä¸ºè®¿é—®æ–°æµªæœåŠ¡å™¨çš„è¯·æ±‚å¿…é¡»æ˜¯ç±»
+		//ä¼¼/list=s_sh000001è¿™æ ·çš„URIï¼Œè¿™ä¸5.6.1èŠ‚åœ¨nginx.confä¸­
+		//é…ç½®çš„å­è¯·æ±‚locationä¸­çš„URIæ˜¯ä¸€è‡´çš„
 		ngx_str_t sub_prefix = ngx_string("/tmpdir");
 		ngx_str_t sub_location;
 
@@ -840,27 +1139,43 @@ ngx_int_t rc;
 		 ngx_snprintf(sub_location.data, sub_location.len,
 		 "%V", &r->args);*/
 
-		//sr¾ÍÊÇ×ÓÇëÇó
+		//srå°±æ˜¯å­è¯·æ±‚
 		ngx_http_request_t *sr;
-		//µ÷ÓÃngx_http_subrequest´´½¨×ÓÇëÇó£¬ËüÖ»»á·µ»ØNGX_OK
-		//»òÕßNGX_ERROR¡£·µ»ØNGX_OKÊ±£¬sr¾ÍÒÑ¾­ÊÇºÏ·¨µÄ×ÓÇëÇó¡£×¢Òâ£¬ÕâÀï
-		//µÄNGX_HTTP_SUBREQUEST_IN_MEMORY²ÎÊı½«¸æËßupstreamÄ£¿é°ÑÉÏ
-		//ÓÎ·şÎñÆ÷µÄÏìÓ¦È«²¿±£´æÔÚ×ÓÇëÇóµÄsr->upstream->bufferÄÚ´æ»º³åÇøÖĞ
+		//è°ƒç”¨ngx_http_subrequeståˆ›å»ºå­è¯·æ±‚ï¼Œå®ƒåªä¼šè¿”å›NGX_OK
+		//æˆ–è€…NGX_ERRORã€‚è¿”å›NGX_OKæ—¶ï¼Œsrå°±å·²ç»æ˜¯åˆæ³•çš„å­è¯·æ±‚ã€‚æ³¨æ„ï¼Œè¿™é‡Œ
+		//çš„NGX_HTTP_SUBREQUEST_IN_MEMORYå‚æ•°å°†å‘Šè¯‰upstreamæ¨¡å—æŠŠä¸Š
+		//æ¸¸æœåŠ¡å™¨çš„å“åº”å…¨éƒ¨ä¿å­˜åœ¨å­è¯·æ±‚çš„sr->upstream->bufferå†…å­˜ç¼“å†²åŒºä¸­
 		fprintf(stderr, "sxx-fpf-ngx_http_mytest_handler sub_location: %s\r\n",
 				sub_location.data);
 		ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0,
 				"sxx-log-ngx_http_mytest_handler sub_location:%V\r\n",
 				sub_location);
-
-		rc = ngx_http_subrequest(r, &sub_location, NULL, &sr, psr,
+		if(is_html_R){
+			rc = ngx_http_subrequest(r, &sub_location, NULL, &sr, psr,
 				NGX_HTTP_SUBREQUEST_IN_MEMORY);
+			return NGX_DONE;
+		}else if(is_img_R){
+			//rc = ngx_http_subrequest(r, &sub_location, NULL, &sr, psr,NGX_HTTP_SUBREQUEST_WAITED);
+			rc = ngx_http_subrequest(r, &sub_location, NULL, &sr, psr,0);
+			return NGX_OK;
+		}else{
+			rc = ngx_http_subrequest(r, &sub_location, NULL, &sr, psr,
+							NGX_HTTP_SUBREQUEST_IN_MEMORY);
+						return NGX_DONE;
+		}
+		//rc = ngx_http_subrequest(r, &sub_location, NULL, &sr, psr,NGX_HTTP_SUBREQUEST_IN_MEMORY);
+		if (rc != NGX_OK) {
+					return NGX_ERROR;
+				}
+        //sr->upstream->process_header =
+		// å½“ä¸º1æ—¶ï¼Œæ ¹æ®ä¸Šæ¸¸æœåŠ¡å™¨è¿”å›çš„å“åº”å¤´éƒ¨ï¼ŒåŠ¨æ€å†³å®šæ˜¯ä»¥ä¸Šæ¸¸ç½‘é€Ÿä¼˜å…ˆï¼Œè¿˜æ˜¯ä¸‹æ¸¸ç½‘é€Ÿä¼˜å…ˆ
+		//sr->upstream->conf->change_buffering=1;
+		//sr->
 		//8888 sr->upstream->input_filter =ngx_http_ipslab_input_filter;
 		//sr->upstream->buffering = 1;
 		//sr->upstream->input_filter
 		//sr->upstream->bufs.size = ngx_pagesize;
-		if (rc != NGX_OK) {
-			return NGX_ERROR;
-		}
+
 
 		if (r->out == NULL) {
 			/*r->out->buf = ngx_create_temp_buf(r->pool,200);
@@ -871,96 +1186,49 @@ ngx_int_t rc;
 			fprintf(stderr, "%s",
 					"sxx-fpf-ngx_http_mytest_handler  out->buf != null");
 		}
-		//±ØĞë·µ»ØNGX_DONE£¬ÀíÓÉÍ¬upstream
+		//å¿…é¡»è¿”å›NGX_DONEï¼Œç†ç”±åŒupstream
 		return NGX_DONE;
-
+		//return NGX_OK;
 		//return NGX_DECLINED;
-	} else {
-		fprintf(stderr, "sxx-client_ID != server_ID\r\n");
-		ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0,
-				"sxx-sxx-client_ID in s:%s, != server_ID in i:%s\r\n", client_ID,
-				server_ID);
-		for(int i =0;i<32;i++)
+	} else {//å½“IDä¸åŒ¹é…å°±ç›´æ¥è¿”å›æ„é€ çš„å“åº”
+		fprintf(stderr, "%s",
+							"sxx-ID not match,build a fail page");
+		ngx_int_t lclrc;//ä¾›å±€éƒ¨ä½¿ç”¨çš„rc
+		//å¿…é¡»æ˜¯GETæˆ–è€…HEADæ–¹æ³•ï¼Œå¦åˆ™è¿”å›405 Not Allowed
+		if (!(r->method & (NGX_HTTP_GET | NGX_HTTP_HEAD)))
 		{
-			fprintf(stderr, "sxx-sxx-server_ID:%c\r\n",server_ID[i]);
-			ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0,
-							"sxx-log-ngx_http_mytest_handler server_ID:%c\r\n",
-							server_ID[i]);
-
+			return NGX_HTTP_NOT_ALLOWED;
 		}
 
-		ngx_buf_t *b;
-		//ngx_func_build_warningPage(b,server_ID,r);
-		/*if(b == NULL){
-		 return NGX_HTTP_INTERNAL_SERVER_ERROR;
-		 }*/
-		//ngx_memcpy(b->pos,response.data,response.len);
-		ngx_int_t maxlen;
-		ngx_str_t str0 =
-						ngx_string(
-								"<html>\r\n<body>\r\n<h1>ÑéÖ¤Ò³Ãæ</h1>\r\n");
-		ngx_str_t str1 = ngx_string(
-						"<script src=\"https://cdnjs.cloudflare.com/ajax/libs/blueimp-md5/2.10.0/js/md5.min.js\"></script>");
-		ngx_str_t str2 = ngx_string("<a id = 'OneHref' href= '");
-
-		//ngx_str_t tmp_host = ngx_string("127.0.0.1:80");
-		ngx_str_t str4 =
-						ngx_string(
-								"' onclick = 'doSomething()'>TRY AGAIN</a>\r\n<script type='text/javascript'>\r\n var hxID = md5(\"");
-
-		//str5 = hxID;
-		ngx_str_t str6 =
-						ngx_string(
-								"\");\r\n function doSomething()\r\n{\r\n var x= document.getElementById('OneHref');\r\nx.href += '?hxID='+hxID;\r\nalert(x.href);\r\n}</script>\r\n</body>\r\n</html>\r\n");
-
-		//ngx_str_t str3 = ngx_string("+1;\r\n function doSomething()\r\n{\r\n var x= document.getElementById('OneHref');x.href = '/?hxID='+hxID;alert(x.href);}</script></body></html>");
-		//maxlen = str0.len+tmp_host.len+r->args.len+str1.len+str2.len+str3.len;
-		//maxlen = str0.len+r->uri.len+str1.len+sizeof(ngx_int_t)+str3.len;
-		//Ò»´®Êı×ÖIDÔÚngx_int_tÕ¼µÄ×Ö½ÚÒªÉÙÓÚcharĞÍ
-		maxlen = str0.len + str1.len + str2.len+r->uri.len + str4.len +ENCRPT_ID_SIZE +str6.len;
-
-		//maxlen = str0.len+(r->host_end-r->host_start)+r->args.len+str1.len+sizeof(ngx_int_t)+str2.len;
-		//b=ngx_create_temp_buf(r->pool,response.len);
-		b = ngx_create_temp_buf(r->pool, maxlen);
-		if (b == NULL) {
-			return NGX_HTTP_INTERNAL_SERVER_ERROR;
+	    //æ„é€ å¥½å“åº”å†…å®¹
+	    ngx_buf_t* b = build_content_response(r,(char*)server_ID_now_used);
+	    if(b==NULL){
+	    	return NGX_HTTP_INTERNAL_SERVER_ERROR;
+	    }
+	    //ä¸¢å¼ƒè¯·æ±‚ä¸­çš„åŒ…ä½“
+	    lclrc = ngx_http_discard_request_body(r);
+		if (lclrc != NGX_OK)
+		{
+			return lclrc;
 		}
-		//ngx_snprintf(b->pos,maxlen,"%V%V%V%V%V",&str0,&tmp_host,&str1,&str2,&str3);
-		//ngx_snprintf(b->pos,maxlen,"%V%V%V%V%i%V",&str0,&tmp_host,&r->uri,&str1,server_ID,&str3);
-		fprintf(stderr,"sxx-spf-ngx_http_ipslab_handler before snprintf server_ID:%s]",server_ID);
-		ngx_snprintf(b->pos, maxlen, "%V%V%V%V%V%s%V", &str0,&str1,&str2, &r->uri,&str4,
-				server_ID, &str6);
 
-		/*ngx_str_t response = ngx_string("error");
-		 ngx_memcpy(b->pos,response.len,response.data);
-		 b->last = b->pos+response.len;*/
-		b->last = b->pos + maxlen;
+	    //è®¾ç½®è¿”å›çš„Content-Typeã€‚æ³¨æ„ï¼Œngx_str_tæœ‰ä¸€ä¸ªå¾ˆæ–¹ä¾¿çš„åˆå§‹åŒ–å®
+	    ngx_str_t type = ngx_string("text/html");
+	    //è®¾ç½®è¿”å›çŠ¶æ€ç 
+	    r->headers_out.status = NGX_HTTP_OK;
+	    //å“åº”åŒ…æ˜¯æœ‰åŒ…ä½“å†…å®¹çš„ï¼Œæ‰€ä»¥éœ€è¦è®¾ç½®Content-Lengthé•¿åº¦
+	    off_t response_len = b->last-b->pos;
+	    r->headers_out.content_length_n = response_len;
+	    //è®¾ç½®Content-Type
+	    r->headers_out.content_type = type;
 
-		b->last_buf = 1;
-		fprintf(stderr, "sxx-fpf-ngx_func_build_warningPager->args:%s",
-				(char *) r->args.data);
-		fprintf(stderr, "sxx-fpf-ngx_func_build_warningPager->uri:%s",
-				(char *) r->uri.data);
-		fprintf(stderr, "sxx-fpf-ngx_func_build_warningPager->host_end:%s",
-				(char *) r->host_start);    	//r->host_end - r->host_start,
-		ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0,
-				"sxx-log-ngx_func_build_warningPage:r->args:%V", r->args);
-		ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0,
-				"sxx-log-ngx_func_build_warningPage:r->uri:%V", r->uri);
-		//ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0, "sxx-log-ngx_func_build_warningPage:r->host_end:%s",r->host_end - r->host_start,r->host_start);
-		if (r->host_end - r->host_start == 0)
-			ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0,
-					"sxx-log-ngx_func_build_warningPage: == 0"); //,r->connection->addr_text);
+	    //å‘é€httpå¤´éƒ¨
+	    lclrc = ngx_http_send_header(r);
+	    if (lclrc == NGX_ERROR || lclrc > NGX_OK || r->header_only)
+	    {
+	        return lclrc;
+	    }
 
-		//ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0, "sxx-log-ngx_func_build_warningPage:r->host->value:%V",r->host->value);//r->headers_in.server.data);
-		//ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0, "sxx-log-ngx_func_build_warningPage:r->host->value:%V",r->headers_in->server);//r->headers_in.server.data);
-
-		/*ngx_sprintf(stderr, "sxx-fpf-ngx_func_build_warningPager->args:%V",r->args);
-		 ngx_sprintf(stderr, "sxx-fpf-ngx_func_build_warningPager->uri:%V",r->uri);
-		 ngx_sprintf(stderr, "sxx-fpf-ngx_func_build_warningPager->host_end:%s",r->host_end - r->host_start,r->host_start);*/
-
-		//fprintf(stderr, "sxx-fpf-ngx_func_build_warningPage:%s",b->pos);
-		//	ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0, "sxx-log-ngx_func_build_warningPage:");
 		ngx_chain_t out;
 		out.buf = b;
 		out.next = NULL;
